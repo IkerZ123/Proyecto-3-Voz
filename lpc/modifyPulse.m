@@ -5,19 +5,30 @@ function pulseModified = modifyPulse(pulse, pulseModifier)
     %       pulseModified = modifyPulse(pulse, pulseModifier)
     %
     %   Entrada:
-    %       pulse (vector): Pulso original
-    %       pulseModifier (float): Factor de modificación
+    %       pulse (vector o matrix): Pulso original (residual)
+    %       pulseModifier (float o struct): Factor de modificación
     %
     %   Salida:
-    %       pulseModified (vector): Pulso modificado
+    %       pulseModified (vector o matrix): Pulso modificado
     %
     %   Descripción:
-    %       Modifica características del pulso como amplitud o forma.
+    %       Modifica características del pulso como amplitud, duración o forma.
     
-    % TODO: Implementar modificación del pulso
-    % - Cambiar amplitud
-    % - Cambiar forma (pendiente, duración)
+    if isstruct(pulseModifier)
+        % Modificación avanzada
+        if isfield(pulseModifier, 'amplitude')
+            pulseModified = pulse * pulseModifier.amplitude;
+        end
+        if isfield(pulseModifier, 'stretch')
+            % Estirar/comprimir el pulso
+            pulseModified = resample(pulseModified, round(size(pulse, 2) * pulseModifier.stretch), size(pulse, 2));
+        end
+    else
+        % Modificación simple: amplitud
+        pulseModified = pulse * pulseModifier;
+    end
     
-    pulseModified = pulse * pulseModifier;
+    % Limitar saturación
+    pulseModified = max(min(pulseModified, 1), -1);
     
 end
