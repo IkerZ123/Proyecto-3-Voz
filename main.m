@@ -4,9 +4,10 @@
 % detección de actividad de voz, sonoridad, y análisis LPC
 
 clear all; close all; clc;
+addpath(genpath(pwd));
 
 %% CONFIGURACIÓN
-audioFile = 'audio/digitos.wav';
+audioFile = 'audio/aeiou_femenino.wav';
 fs = 16000;                    % Frecuencia de muestreo (Hz)
 frameLength = 0.025;           % Longitud de frame (s)
 frameSamples = round(frameLength * fs);  % Número de muestras por frame
@@ -140,19 +141,120 @@ ylabel('Ganancia (dB)');
 grid on;
 
 %% 5.b SEPARACIÓN POR FILTRADO INVERSO
+fprintf('Separando pulso y tracto vocal mediante filtrado inverso...\n');
 
+l_v = frameSamples;
+n_coef = lpcOrder;
+polo = 0.95;
+[pulso, tracto, matriz_a_lpc] = separatePulseTract(signal, fs, l_v, n_coef, polo);
 
-%% 6. MODIFICACIÓN EN DOMINIO DEL TIEMPO
+if ~exist('output', 'dir')
+    mkdir('output');
+end
+if any(abs(tracto) > 0)
+    audiowrite('output/tracto.wav', tracto / max(abs(tracto) + eps), fs);
+end
+
+% Generar pulso sintético a partir de F0 para usar en la reconstrucción
+pulsoSintetico = synthesizePulseFromF0(F0, isVoiced, fs, length(signal), frameDuration);
+if any(abs(pulsoSintetico) > 0)
+    audiowrite('output/pulso_sintetico.wav', pulsoSintetico, fs);
+end
+
+figure;
+timePulso = (0:length(pulso)-1) / fs;
+subplot(3,1,1);
+plot(timePulso, pulso);
+title('Pulso glótico extraído');
+xlabel('Tiempo (s)');
+ylabel('Amplitud');
+grid on;
+
+subplot(3,1,2);
+spectrogram(pulso, 256, 128, 512, fs, 'yaxis');
+title('Espectrograma del pulso glótico');
+
+subplot(3,1,3);
+plot((0:length(pulsoSintetico)-1)/fs, pulsoSintetico);
+title('Pulso sintético a partir de F0');
+xlabel('Tiempo (s)');
+ylabel('Amplitud');
+grid on;
+
+figure;
+subplot(2,1,1);
+spectrogram(tracto, 256, 128, 512, fs, 'yaxis');
+title('Espectrograma del tracto vocal extraído');
+
+subplot(2,1,2);
+plot((0:length(tracto)-1)/fs, tracto);
+title('Tracto vocal extraído en el dominio del tiempo');
+xlabel('Tiempo (s)');
+ylabel('Amplitud');
+grid on;
+
+%% 6. MODIFICACIÓN DEL PULSO Y RECOMPOSICIÓN
+fprintf('Modificando el pulso y recomponiendo la señal...\n');
+
+pulseGain = input('Factor de ganancia del pulso [1.0]: ');
+if isempty(pulseGain)
+    pulseGain = 1.0;
+end
+pulseCutoff = input('Frecuencia de corte para suavizar el pulso (Hz, 0 = sin filtrar) [0]: ');
+if isempty(pulseCutoff)
+    pulseCutoff = 0;
+end
+
+pulsoMod = pulsoSintetico * pulseGain;
+if pulseCutoff > 0
+    pulsoMod = lowpass(pulsoMod, pulseCutoff, fs);
+end
+
+% Reconstrucción a partir del pulso modificado y el tracto LPC
+recomposedFromPulse = zeros(length(signal), 1);
+normRecomposed = zeros(length(signal), 1);
+window = hamming(l_v, 'periodic');
+desplaza = l_v / 2;
+numBlocks = size(matriz_a_lpc, 2);
+
+for i = 1:numBlocks
+    idx = (i-1) * desplaza + 1;
+    segment = pulsoMod(idx:idx + l_v - 1) .* window;
+    a_lpc = matriz_a_lpc(:, i);
+    reconstructedSegment = filter(1, a_lpc, segment);
+    recomposedFromPulse(idx:idx + l_v - 1) = recomposedFromPulse(idx:idx + l_v - 1) + reconstructedSegment;
+    normRecomposed(idx:idx + l_v - 1) = normRecomposed(idx:idx + l_v - 1) + window;
+end
+
+recomposedFromPulse = recomposedFromPulse ./ (normRecomposed + eps);
+recomposedFromPulse = recomposedFromPulse / max(abs(recomposedFromPulse) + eps);
+
+if any(abs(recomposedFromPulse) > 0)
+    audiowrite('output/signal_recomposed_from_pulse.wav', recomposedFromPulse, fs);
+end
+
+figure;
+plot((0:length(recomposedFromPulse)-1)/fs, recomposedFromPulse);
+title('Señal recompuesta desde pulso modificado');
+xlabel('Tiempo (s)');
+ylabel('Amplitud');
+grid on;
+
+figure;
+spectrogram(recomposedFromPulse, 256, 128, 512, fs, 'yaxis');
+title('Espectrograma de la señal recompuesta desde pulso');
+
+%% 7. MODIFICACIÓN EN DOMINIO DEL TIEMPO
 fprintf('Modificando pitch en dominio del tiempo...\n');
 signalModified = modifyPitch(signal, fs, isVoiced, pitchShift, selectionStartTime, selectionEndTime);
 
-%% 7. ANÁLISIS LPC DE LA SEÑAL MODIFICADA
-fprintf('Recomponiendo señal...\n');
-signalReconstructed = reconstructSignal(signalModified, fs, lpcCoeffs, lpcOrder, gain);
+% 8. ANÁLISIS LPC DE LA SEÑAL MODIFICADA
+%fprintf('Recomponiendo señal...\n');
+%signalReconstructed = reconstructSignal(signalModified, fs, lpcCoeffs, lpcOrder, gain);
 
 %% 8. VISUALIZACIÓN DE RESULTADOS
 plotSignal(signalModified, fs, 'Señal Modificada');
-plotSignal(signalReconstructed, fs, 'Señal Reconstruida');
+%plotSignal(signalReconstructed, fs, 'Señal Reconstruida');
 
 figure;
 subplot(3,1,1);
@@ -181,6 +283,6 @@ grid on;
 %% 9. GUARDAR RESULTADOS
 fprintf('Guardando resultados...\n');
 audiowrite('output/signal_modified.wav', signalModified, fs);
-audiowrite('output/signal_reconstructed.wav', signalReconstructed, fs);
+%audiowrite('output/signal_reconstructed.wav', signalReconstructed, fs);
 
 fprintf('\n=== PROCESO COMPLETADO ===\n');
