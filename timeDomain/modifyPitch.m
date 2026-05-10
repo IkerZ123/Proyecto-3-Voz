@@ -1,73 +1,64 @@
-function signalModified = modifyPitch(signal, fs, isVoiced, pitchFactor)
+function signalModified = modifyPitch(signal, fs, isVoiced, pitchFactor, selectionStartTime, selectionEndTime)
     % MODIFYPITCH Modificación de Entonación/Pitch
     %
     %   Sintaxis:
-    %       signalModified = modifyPitch(signal, fs, isVoiced, pitchFactor)
+    %       signalModified = modifyPitch(signal, fs, isVoiced, pitchFactor, selectionStartTime, selectionEndTime)
     %
     %   Entrada:
     %       signal (vector): Señal de audio original
     %       fs (int): Frecuencia de muestreo (Hz)
     %       isVoiced (vector): Indicador de sonoridad por frame
     %       pitchFactor (float): Factor de modificación (>1 aumenta, <1 disminuye)
+    %       selectionStartTime (float): Tiempo inicial del fragmento a modificar (s)
+    %       selectionEndTime (float): Tiempo final del fragmento a modificar (s)
     %
     %   Salida:
     %       signalModified (vector): Señal con pitch modificado
     %
     %   Descripción:
-    %       Modifica la entonación de la señal sin cambiar su duración.
-    %       Usa interpolación y remuestreo en el dominio del tiempo.
+    %       Modifica la entonación de la señal sin cambiar la duración.
+    %       Solo aplica el cambio en la región seleccionada y en los frames sonoros.
     
-    frameDuration = 0.025;
-    frameSamples = round(frameDuration * fs);
-    numFrames = floor(length(signal) / frameSamples);
+    if nargin < 5 || isempty(selectionStartTime)
+        selectionStartTime = 0;
+    end
+    if nargin < 6 || isempty(selectionEndTime)
+        selectionEndTime = inf;
+    end
     
     signalModified = signal;
     
-    for i = 1:numFrames
-        frameStart = (i-1) * frameSamples + 1;
-        frameEnd = min(frameStart + frameSamples - 1, length(signal));
-        actualFrameSamples = frameEnd - frameStart + 1;
-        
-        frame = signal(frameStart:frameEnd);
-        
-        % Solo modificar si el frame es sonoro
-        if isVoiced(i) && actualFrameSamples == frameSamples
-            % Aplicar ventana
-            window = hamming(actualFrameSamples);
-            frame_windowed = frame .* window;
-            
-            % Transformada de Fourier
-            frame_fft = fft(frame_windowed);
-            freq_bins = 0:length(frame_fft)-1;
-            
-            % Desplazar espectro (pitch shift en el dominio de Fourier)
-            new_bins = freq_bins / pitchFactor;
-            
-            % Interpolar espectro
-            frame_fft_shifted = interp1(freq_bins, frame_fft, new_bins, 'linear', 0);
-            
-            % Si el factor amplía el espectro, rellenar con ceros
-            if pitchFactor < 1
-                frame_fft_shifted(ceil(end/pitchFactor):end) = 0;
-            end
-            
-            % Transformada inversa
-            frame_modified = real(ifft(frame_fft_shifted));
-            
-            % Remover ventana
-            frame_modified = frame_modified .* window;
-            
-            % Normalizar
-            max_val = max(abs(frame_modified));
-            if max_val > 0
-                frame_modified = frame_modified / max_val * max(abs(frame));
-            end
-            
-            signalModified(frameStart:frameEnd) = frame_modified(1:actualFrameSamples);
-        end
+    % Aplicar pitch shift directamente a la región seleccionada
+    startSample = max(1, floor(selectionStartTime * fs) + 1);
+    endSample = min(length(signal), ceil(selectionEndTime * fs));
+    region = signal(startSample:endSample);
+
+    if isempty(region) || abs(pitchFactor - 1) < eps
+        return;
     end
+
+    % Cambiar pitch mediante remuestreo y estiramiento temporal
+    [p, q] = rat(1 / pitchFactor, 1e-6);
+    regionPitch = resample(region, p, q);
+    stretchFactor = length(region) / max(length(regionPitch), 1);
+    regionModified = timeStretch(regionPitch, stretchFactor);
+    regionModified = regionModified(1:min(length(regionModified), length(region)));
+    if length(regionModified) < length(region)
+        regionModified(end+1:length(region)) = 0;
+    end
+
+    % Aplicar ventana de suavizado en los bordes para evitar clics
+    fadeLen = min(64, floor(length(regionModified) / 10));
+    if fadeLen > 1
+        fadeWindow = ones(size(regionModified));
+        fadeWindow(1:fadeLen) = linspace(0, 1, fadeLen)';
+        fadeWindow(end-fadeLen+1:end) = linspace(1, 0, fadeLen)';
+        regionModified = regionModified .* fadeWindow;
+    end
+
+    signalModified(startSample:endSample) = regionModified;
     
-    % Normalizar señal final
+    % Normalizar todo el signalModified para evitar clipping
     max_val = max(abs(signalModified));
     if max_val > 1
         signalModified = signalModified / max_val;

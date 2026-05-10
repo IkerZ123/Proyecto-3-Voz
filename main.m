@@ -11,7 +11,6 @@ fs = 16000;                    % Frecuencia de muestreo (Hz)
 frameLength = 0.025;           % Longitud de frame (s)
 frameSamples = round(frameLength * fs);  % Número de muestras por frame
 frameDuration = frameLength;   % Duración de frame en segundos
-pitchShift = 1.2;              % Factor de modificación de pitch (1.2 = +20%)
 lpcOrder = 12;                 % Orden de LPC
 
 %% 1. CARGA DE AUDIO
@@ -20,7 +19,56 @@ fprintf('Cargando audio...\n');
 [signal, fs] = loadAudio(audioFile);
 fprintf('  ✓ Audio cargado: %d muestras, fs = %d Hz, duración = %.2f s\n', ...
     length(signal), fs, length(signal)/fs);
+% Pedir selección de fragmento al usuario
+recomendacionStart = 0.8;
+recomendacionEnd = 1.8;
+selectionStartTime = input(sprintf('Tiempo de inicio del fragmento a modificar (s) [%.2f]: ', recomendacionStart));
+if isempty(selectionStartTime)
+    selectionStartTime = recomendacionStart;
+end
+selectionEndTime = input(sprintf('Tiempo de fin del fragmento a modificar (s) [%.2f]: ', recomendacionEnd));
+if isempty(selectionEndTime)
+    selectionEndTime = recomendacionEnd;
+end
+if selectionStartTime < 0
+    selectionStartTime = 0;
+end
+if selectionEndTime > length(signal)/fs
+    selectionEndTime = length(signal)/fs;
+end
+if selectionEndTime < selectionStartTime
+    temp = selectionStartTime;
+    selectionStartTime = selectionEndTime;
+    selectionEndTime = temp;
+end
+
+semitoneShift = input('Número de semitonos para ajustar (+agudo, -grave) [2]: ');
+if isempty(semitoneShift)
+    semitoneShift = 2;
+end
+if semitoneShift >= 0
+    directionText = 'agudo';
+else
+    directionText = 'grave';
+end
+pitchShift = 2^(semitoneShift/12);
+fprintf('Ajustando la región %.2f-%.2f s hacia %s (%+d semitono(s))\n', ...
+    selectionStartTime, selectionEndTime, directionText, semitoneShift);
 plotSignal(signal, fs, 'Señal Original');
+
+% Mostrar la región seleccionada para afinación
+figure;
+time = (0:length(signal)-1) / fs;
+plot(time, signal, 'b');
+hold on;
+yl = ylim();
+patch([selectionStartTime selectionEndTime selectionEndTime selectionStartTime], ...
+      [yl(1) yl(1) yl(2) yl(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.25, 'EdgeColor', 'none');
+plot(time, signal, 'b');
+xlabel('Tiempo (s)');
+ylabel('Amplitud');
+title(sprintf('Señal original con región seleccionada [%.2f, %.2f] s', selectionStartTime, selectionEndTime));
+grid on;
 
 %% 2. PREPROCESAMIENTO
 fprintf('Preprocesando señal...\n');
@@ -91,9 +139,12 @@ xlabel('Tiempo (s)');
 ylabel('Ganancia (dB)');
 grid on;
 
+%% 5.b SEPARACIÓN POR FILTRADO INVERSO
+
+
 %% 6. MODIFICACIÓN EN DOMINIO DEL TIEMPO
 fprintf('Modificando pitch en dominio del tiempo...\n');
-signalModified = modifyPitch(signal, fs, isVoiced, pitchShift);
+signalModified = modifyPitch(signal, fs, isVoiced, pitchShift, selectionStartTime, selectionEndTime);
 
 %% 7. ANÁLISIS LPC DE LA SEÑAL MODIFICADA
 fprintf('Recomponiendo señal...\n');
