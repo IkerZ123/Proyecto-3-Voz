@@ -7,7 +7,23 @@ clear all; close all; clc;
 addpath(genpath(pwd));
 
 %% CONFIGURACIÓN
-audioFile = 'audio/aeiou_femenino.wav';
+audioDir = 'audio';
+defaultAudioFile = 'aeiou_femenino.wav';
+audioFileName = input(sprintf('Nombre del archivo de audio dentro de %s [%s]: ', audioDir, defaultAudioFile), 's');
+if isempty(audioFileName)
+    audioFileName = defaultAudioFile;
+end
+
+audioFile = fullfile(audioDir, audioFileName);
+if ~exist(audioFile, 'file')
+    fprintf('Error: no se encontró el archivo "%s". Finalizando programa.\n', audioFile);
+    return;
+end
+
+[~, audioBaseName] = fileparts(audioFileName);
+audioBaseName = strrep(audioBaseName, ' ', '_');
+outputDir = 'output';
+
 fs = 16000;                    % Frecuencia de muestreo (Hz)
 frameLength = 0.025;           % Longitud de frame (s)
 frameSamples = round(frameLength * fs);  % Número de muestras por frame
@@ -16,7 +32,7 @@ lpcOrder = 12;                 % Orden de LPC
 
 %% 1. CARGA DE AUDIO
 fprintf('=== SISTEMA DE CORRECCIÓN DE ENTONACIÓN ===\n');
-fprintf('Cargando audio...\n');
+fprintf('Cargando audio: %s\n', audioFile);
 [signal, fs] = loadAudio(audioFile);
 fprintf('  ✓ Audio cargado: %d muestras, fs = %d Hz, duración = %.2f s\n', ...
     length(signal), fs, length(signal)/fs);
@@ -148,17 +164,17 @@ n_coef = lpcOrder;
 polo = 0.95;
 [pulso, tracto, matriz_a_lpc] = separatePulseTract(signal, fs, l_v, n_coef, polo);
 
-if ~exist('output', 'dir')
-    mkdir('output');
+if ~exist(outputDir, 'dir')
+    mkdir(outputDir);
 end
 if any(abs(tracto) > 0)
-    audiowrite('output/tracto.wav', tracto / max(abs(tracto) + eps), fs);
+    audiowrite(fullfile(outputDir, sprintf('%s_tracto.wav', audioBaseName)), tracto / max(abs(tracto) + eps), fs);
 end
 
 % Generar pulso sintético a partir de F0 para usar en la reconstrucción
 pulsoSintetico = synthesizePulseFromF0(F0, isVoiced, fs, length(signal), frameDuration);
 if any(abs(pulsoSintetico) > 0)
-    audiowrite('output/pulso_sintetico.wav', pulsoSintetico, fs);
+    audiowrite(fullfile(outputDir, sprintf('%s_pulso_sintetico.wav', audioBaseName)), pulsoSintetico, fs);
 end
 
 figure;
@@ -230,7 +246,7 @@ recomposedFromPulse = recomposedFromPulse ./ (normRecomposed + eps);
 recomposedFromPulse = recomposedFromPulse / max(abs(recomposedFromPulse) + eps);
 
 if any(abs(recomposedFromPulse) > 0)
-    audiowrite('output/signal_recomposed_from_pulse.wav', recomposedFromPulse, fs);
+    audiowrite(fullfile(outputDir, sprintf('%s_recomposed_from_pulse.wav', audioBaseName)), recomposedFromPulse, fs);
 end
 
 figure;
@@ -282,7 +298,7 @@ grid on;
 
 %% 9. GUARDAR RESULTADOS
 fprintf('Guardando resultados...\n');
-audiowrite('output/signal_modified.wav', signalModified, fs);
-%audiowrite('output/signal_reconstructed.wav', signalReconstructed, fs);
+audiowrite(fullfile(outputDir, sprintf('%s_modified.wav', audioBaseName)), signalModified, fs);
+%audiowrite(fullfile(outputDir, sprintf('%s_reconstructed.wav', audioBaseName)), signalReconstructed, fs);
 
 fprintf('\n=== PROCESO COMPLETADO ===\n');
